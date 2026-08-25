@@ -1,5 +1,26 @@
 # emdash
 
+## 0.35.1
+
+### Patch Changes
+
+- [#2599](https://github.com/emdash-cms/emdash/pull/2599) [`b383a67`](https://github.com/emdash-cms/emdash/commit/b383a67b5f4a75d5757f76c4385e9ee83df6f3de) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes code blocks in the admin and inline visual editors so Tab and Shift+Tab indent and outdent code instead of moving focus.
+
+- [#2598](https://github.com/emdash-cms/emdash/pull/2598) [`0f225eb`](https://github.com/emdash-cms/emdash/commit/0f225ebe77559139570cef6231360b60f99be9b5) Thanks [@Glacier-Luo](https://github.com/Glacier-Luo)! - Fixes session-authenticated CMS comment submissions so they retain the user identity and honor automatic approval settings.
+
+- [#2600](https://github.com/emdash-cms/emdash/pull/2600) [`2fde0f9`](https://github.com/emdash-cms/emdash/commit/2fde0f9e5b5d864bcd8006ec243ff2c5f7dde9df) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes the Playground welcome dialog reappearing after it has been dismissed and the page is reloaded or Edit mode is toggled.
+
+- [#2556](https://github.com/emdash-cms/emdash/pull/2556) [`37c5010`](https://github.com/emdash-cms/emdash/commit/37c50108aa3489c134f182919cbf78bfa256e520) Thanks [@cherenkov](https://github.com/cherenkov)! - Fixes `emdash content create` and `content update` failing with "Cannot construct a Request with a Request object that has already been used" when the stored access token has expired. Requests carrying a body are now retried correctly after the token is refreshed.
+
+- [#2612](https://github.com/emdash-cms/emdash/pull/2612) [`628630a`](https://github.com/emdash-cms/emdash/commit/628630acb5bc0b010d7bd317db9d02b70a70d579) Thanks [@danielmlr](https://github.com/danielmlr)! - Fixes SQLite and D1 sites where an interrupted upgrade left the byline credits table staged as `_emdash_content_bylines_new`, so pages, feeds and the admin reported no entries although the content was intact. The next migration run restores the table and the stored credits.
+
+- [#2463](https://github.com/emdash-cms/emdash/pull/2463) [`f613a14`](https://github.com/emdash-cms/emdash/commit/f613a1470581ad750183ba74ba9562d624db8d88) Thanks [@helio-cf](https://github.com/helio-cf)! - Fixes media previews for streaming providers such as Cloudflare Stream. Video from these providers now shows its poster thumbnail in the media library grid and list, plays in the detail panel instead of stalling at 0:00, and reports the file size the provider supplies. Also exports `Media` from `emdash/ui`, so frontends can render provider-backed video and audio that `Image` cannot.
+
+- Updated dependencies [[`72664ad`](https://github.com/emdash-cms/emdash/commit/72664ad09c230e5b0ba5b55789b5eb118c6b487e), [`2ffda17`](https://github.com/emdash-cms/emdash/commit/2ffda1737cfbe57c5d10bf57f2b3a48f4d49ae4a), [`2b54096`](https://github.com/emdash-cms/emdash/commit/2b540969f3a73f670c724c17ac59d778d429e055), [`76dd3eb`](https://github.com/emdash-cms/emdash/commit/76dd3ebee96ddf53a149d09f98919d43f07fd53a), [`b383a67`](https://github.com/emdash-cms/emdash/commit/b383a67b5f4a75d5757f76c4385e9ee83df6f3de), [`1f2678b`](https://github.com/emdash-cms/emdash/commit/1f2678b7a477fdd225d2888f50fa664c85cf9e43), [`52f7c91`](https://github.com/emdash-cms/emdash/commit/52f7c91ae9efe2a9b023ea7b6cb739376f8da096), [`72664ad`](https://github.com/emdash-cms/emdash/commit/72664ad09c230e5b0ba5b55789b5eb118c6b487e), [`f613a14`](https://github.com/emdash-cms/emdash/commit/f613a1470581ad750183ba74ba9562d624db8d88), [`1c6b893`](https://github.com/emdash-cms/emdash/commit/1c6b893b40134aeaeedd056594d5bd7b6bfc1a53)]:
+  - @emdash-cms/admin@0.35.1
+  - @emdash-cms/auth@0.35.1
+  - @emdash-cms/gutenberg-to-portable-text@0.35.1
+
 ## 0.35.0
 
 ### Minor Changes

@@ -1,5 +1,32 @@
 # @emdash-cms/admin
 
+## 0.35.1
+
+### Patch Changes
+
+- [#2468](https://github.com/emdash-cms/emdash/pull/2468) [`72664ad`](https://github.com/emdash-cms/emdash/commit/72664ad09c230e5b0ba5b55789b5eb118c6b487e) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes vertical alignment of editor sidebar drag handles with standard and collapsible section headings.
+
+- [#2610](https://github.com/emdash-cms/emdash/pull/2610) [`2ffda17`](https://github.com/emdash-cms/emdash/commit/2ffda1737cfbe57c5d10bf57f2b3a48f4d49ae4a) Thanks [@MatsudaTsunenori](https://github.com/MatsudaTsunenori)! - Completes the Japanese admin translation so Japanese-speaking users see localized text for every catalog message.
+
+- [#2490](https://github.com/emdash-cms/emdash/pull/2490) [`2b54096`](https://github.com/emdash-cms/emdash/commit/2b540969f3a73f670c724c17ac59d778d429e055) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes image action controls intermittently failing to appear when selecting an image in the editor.
+
+- [#2632](https://github.com/emdash-cms/emdash/pull/2632) [`76dd3eb`](https://github.com/emdash-cms/emdash/commit/76dd3ebee96ddf53a149d09f98919d43f07fd53a) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes implicit English locale guidance in the content editor by replacing the persistent warning with compact, accessible help.
+
+- [#2599](https://github.com/emdash-cms/emdash/pull/2599) [`b383a67`](https://github.com/emdash-cms/emdash/commit/b383a67b5f4a75d5757f76c4385e9ee83df6f3de) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes code blocks in the admin and inline visual editors so Tab and Shift+Tab indent and outdent code instead of moving focus.
+
+- [#2548](https://github.com/emdash-cms/emdash/pull/2548) [`1f2678b`](https://github.com/emdash-cms/emdash/commit/1f2678b7a477fdd225d2888f50fa664c85cf9e43) Thanks [@ahliweb](https://github.com/ahliweb)! - Completes the Indonesian admin translations, covering the image gallery block, plugin MCP tool settings, byline filters, content locale settings, and scheduled publishing warnings.
+
+- [#2629](https://github.com/emdash-cms/emdash/pull/2629) [`52f7c91`](https://github.com/emdash-cms/emdash/commit/52f7c91ae9efe2a9b023ea7b6cb739376f8da096) Thanks [@emdashbot](https://github.com/apps/emdashbot)! - Fixes the Section editor so plugin-provided Portable Text blocks appear in the slash menu alongside core blocks, matching the content and widget editors.
+
+- [#2468](https://github.com/emdash-cms/emdash/pull/2468) [`72664ad`](https://github.com/emdash-cms/emdash/commit/72664ad09c230e5b0ba5b55789b5eb118c6b487e) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes the meta description field shifting after the first character is entered.
+
+- [#2463](https://github.com/emdash-cms/emdash/pull/2463) [`f613a14`](https://github.com/emdash-cms/emdash/commit/f613a1470581ad750183ba74ba9562d624db8d88) Thanks [@helio-cf](https://github.com/helio-cf)! - Fixes media previews for streaming providers such as Cloudflare Stream. Video from these providers now shows its poster thumbnail in the media library grid and list, plays in the detail panel instead of stalling at 0:00, and reports the file size the provider supplies. Also exports `Media` from `emdash/ui`, so frontends can render provider-backed video and audio that `Image` cannot.
+
+- [#2628](https://github.com/emdash-cms/emdash/pull/2628) [`1c6b893`](https://github.com/emdash-cms/emdash/commit/1c6b893b40134aeaeedd056594d5bd7b6bfc1a53) Thanks [@scottbuscemi](https://github.com/scottbuscemi)! - Fixes line breaks entered in table cells disappearing from saved content.
+
+- Updated dependencies []:
+  - @emdash-cms/blocks@0.35.1
+
 ## 0.35.0
 
 ### Minor Changes

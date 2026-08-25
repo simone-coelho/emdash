@@ -1,5 +1,14 @@
 # @emdash-cms/cloudflare
 
+## 0.35.1
+
+### Patch Changes
+
+- [#2463](https://github.com/emdash-cms/emdash/pull/2463) [`f613a14`](https://github.com/emdash-cms/emdash/commit/f613a1470581ad750183ba74ba9562d624db8d88) Thanks [@helio-cf](https://github.com/helio-cf)! - Fixes media previews for streaming providers such as Cloudflare Stream. Video from these providers now shows its poster thumbnail in the media library grid and list, plays in the detail panel instead of stalling at 0:00, and reports the file size the provider supplies. Also exports `Media` from `emdash/ui`, so frontends can render provider-backed video and audio that `Image` cannot.
+
+- Updated dependencies [[`b383a67`](https://github.com/emdash-cms/emdash/commit/b383a67b5f4a75d5757f76c4385e9ee83df6f3de), [`0f225eb`](https://github.com/emdash-cms/emdash/commit/0f225ebe77559139570cef6231360b60f99be9b5), [`2fde0f9`](https://github.com/emdash-cms/emdash/commit/2fde0f9e5b5d864bcd8006ec243ff2c5f7dde9df), [`37c5010`](https://github.com/emdash-cms/emdash/commit/37c50108aa3489c134f182919cbf78bfa256e520), [`628630a`](https://github.com/emdash-cms/emdash/commit/628630acb5bc0b010d7bd317db9d02b70a70d579), [`f613a14`](https://github.com/emdash-cms/emdash/commit/f613a1470581ad750183ba74ba9562d624db8d88)]:
+  - emdash@0.35.1
+
 ## 0.35.0
 
 ### Minor Changes
