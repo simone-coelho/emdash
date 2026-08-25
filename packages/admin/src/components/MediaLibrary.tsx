@@ -61,6 +61,7 @@ import {
 	getFileIcon,
 	formatFileSize,
 	getMediaThumbnailUrl,
+	getMediaObjectPosition,
 	fallbackToOriginalThumbnail,
 	MEDIA_THUMBNAIL_WIDTH,
 	metaNumber,
@@ -1632,6 +1633,7 @@ function MediaGridItem({ item, selected, draggable, isMoving, onClick }: MediaGr
 						alt={item.alt || item.filename}
 						draggable={false}
 						className="h-full w-full object-cover"
+						style={{ objectPosition: getMediaObjectPosition(item) }}
 						onError={(e) => fallbackToOriginalThumbnail(e.currentTarget, item.url)}
 					/>
 				) : (
@@ -1740,6 +1742,7 @@ function MediaListItem({ item, selected, draggable, isMoving, onClick }: MediaLi
 							alt={item.alt || item.filename}
 							draggable={false}
 							className="h-full w-full object-cover"
+							style={{ objectPosition: getMediaObjectPosition(item) }}
 							onError={(e) => fallbackToOriginalThumbnail(e.currentTarget, item.url)}
 						/>
 					) : (
