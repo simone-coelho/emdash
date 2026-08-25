@@ -1,3 +1,4 @@
+import type { AccessActor, AccessRole } from "./access/auth.js";
 import { apiSuccess } from "./api/response.js";
 import type { ServiceConfiguration } from "./config.js";
 import { getClientMetadata, getPublicJwks, publicOAuthJson } from "./oauth/metadata.js";
@@ -8,12 +9,14 @@ import {
 } from "./oauth/routes.js";
 
 export interface RouteDefinition {
-	method: "GET" | "POST";
+	method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 	path: string;
+	accessRole?: AccessRole;
 	handler(
 		request: Request,
 		requestId: string,
 		configuration: ServiceConfiguration,
+		accessActor: AccessActor | null,
 	): Response | Promise<Response>;
 }
 
