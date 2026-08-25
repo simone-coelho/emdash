@@ -1,6 +1,6 @@
 ---
-"@emdash-cms/plugin-cli": minor
-"@emdash-cms/registry-client": minor
+"@emdash-cms/plugin-cli": patch
+"@emdash-cms/registry-client": patch
 ---
 
-Add an engineering conformance command and reusable probe runner for validating the delegated release service's exact create-only PDS scope. The command never falls back to broad `transition:generic` authority and emits redacted evidence for authorization, refresh, and revocation runs.
+Adds internal engineering conformance tooling for validating the delegated release service's exact create-only PDS scope. The hidden command never falls back to broad `transition:generic` authority and emits redacted evidence for authorization, refresh, and revocation runs.

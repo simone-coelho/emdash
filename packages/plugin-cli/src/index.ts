@@ -48,7 +48,7 @@ const main = defineCommand({
 	subCommands: {
 		login: loginCommand,
 		logout: logoutCommand,
-		"pds-conformance": pdsConformanceCommand,
+		...(process.argv[2] === "pds-conformance" ? { "pds-conformance": pdsConformanceCommand } : {}),
 		whoami: whoamiCommand,
 		switch: switchCommand,
 		search: searchCommand,

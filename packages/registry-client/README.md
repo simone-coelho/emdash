@@ -6,7 +6,7 @@ Atproto-aware client for the EmDash plugin registry.
 
 ## Layers
 
-This package is split into four independent surfaces. Import only the one you need.
+This package is split into three independent surfaces. Import only the one you need.
 
 ### Credentials (`@emdash-cms/registry-client/credentials`)
 
@@ -29,12 +29,6 @@ The interactive OAuth flow lives in the CLI, not here. This module accepts a pre
 Read-only XRPC client over an aggregator. No authentication. Used by the CLI (`emdash-plugin search`, `emdash-plugin info`) and the EmDash admin UI's install flow.
 
 The `acceptLabelers` option threads the `atproto-accept-labelers` request header through every call so callers can configure which labellers' hard-takedown labels the aggregator should apply.
-
-### PDS conformance (`@emdash-cms/registry-client/conformance`)
-
-`runPdsScopeConformance()` checks an authenticated session's delegated-release authority. It requires release creation and public readback while requiring update, delete, profile-create, and unrelated-collection writes to fail. The caller supplies the authenticated handler, so the same probes work with loopback and confidential OAuth clients.
-
-The runner leaves its successfully created release record in the dedicated conformance account. Use it only with test accounts.
 
 ## Stability
 
