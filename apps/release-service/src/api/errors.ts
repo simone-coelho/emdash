@@ -12,7 +12,8 @@ export type ApiErrorCode =
 	| "OAUTH_AUTHORIZATION_FAILED"
 	| "OAUTH_CALLBACK_INVALID"
 	| "PUBLISHER_SESSION_INVALID"
-	| "PUBLISHER_SUSPENDED";
+	| "PUBLISHER_SUSPENDED"
+	| "SERVICE_UNAVAILABLE";
 
 export interface SerializedApiError {
 	code: ApiErrorCode;
