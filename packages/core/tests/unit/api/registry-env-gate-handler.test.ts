@@ -8,7 +8,7 @@
  * `ENV_INCOMPATIBLE` result aborts *before* any artifact fetch.
  */
 
-import { verifyPackageReleaseRecords } from "@emdash-cms/registry-verification";
+import { inspectPackageReleaseRecords } from "@emdash-cms/registry-verification";
 import BetterSqlite3 from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -105,7 +105,7 @@ function authoritativeReader(requires: Record<string, string>): AuthoritativeRec
 			},
 		};
 		const rkey = packageSlug + ":" + version;
-		const report = await verifyPackageReleaseRecords({
+		const inspection = await inspectPackageReleaseRecords({
 			publisherDid,
 			package: packageSlug,
 			version,
@@ -113,10 +113,13 @@ function authoritativeReader(requires: Record<string, string>): AuthoritativeRec
 			profile,
 			release,
 		});
-		if (!report.success) throw new Error(report.reasons[0]?.message);
+		if (!inspection.success) throw new Error(inspection.reasons[0]?.message);
 		return {
 			success: true,
 			value: {
+				publisherDid,
+				packageSlug,
+				version,
 				profile: {
 					uri: profile.id,
 					cid: "bafy-profile",
@@ -129,7 +132,7 @@ function authoritativeReader(requires: Record<string, string>): AuthoritativeRec
 					rkey,
 					value: release,
 				},
-				report,
+				inspection,
 			},
 		};
 	};

@@ -52,9 +52,11 @@ import {
 } from "../../registry/artifact-verification.js";
 import {
 	readAuthoritativePackageRelease,
+	verifyAuthoritativePackageRelease,
 	type AuthoritativeRecordErrorCode,
 	type AuthoritativeRecordReader,
 	type AuthoritativeRecordReadOptions,
+	type VerifiedAuthoritativeReleaseReport,
 	type VerifiedAuthoritativeRecords,
 } from "../../registry/authoritative-records.js";
 import {
@@ -207,12 +209,13 @@ function registryRecordError(
 
 function recordVerificationSummary(
 	records: VerifiedAuthoritativeRecords,
+	report: VerifiedAuthoritativeReleaseReport,
 ): RegistryRecordVerificationSummary {
 	return {
 		profileCid: records.profile.cid,
 		releaseCid: records.release.cid,
-		provenance: records.report.provenance.status,
-		policy: records.report.value.policy,
+		provenance: report.provenance.status,
+		policy: report.value.policy,
 	};
 }
 
@@ -792,7 +795,7 @@ export async function handleRegistryInstall(
 			return registryRecordError(authoritative.error.code, authoritative.error.message);
 		}
 		const records = authoritative.value;
-		const { profile, release } = records.report.value;
+		const { profile, release } = records.inspection.value;
 
 		// Moderation applies to the exact signed metadata CIDs. A stale,
 		// unversioned, negated, or expired label cannot affect this release.
@@ -942,7 +945,7 @@ export async function handleRegistryInstall(
 			};
 		}
 
-		// Step 4: fetch bytes from an aggregator mirror or the URL in the
+		// Step 5: fetch bytes from an aggregator mirror or the URL in the
 		// authoritative signed release. Mirror bytes remain untrusted.
 		const declaredUrl = release.artifacts.package.url;
 		const declaredChecksum = release.artifacts.package.checksum;
@@ -960,7 +963,7 @@ export async function handleRegistryInstall(
 		const mirrors = releaseView.mirrors ?? [];
 		const artifactBytes = await fetchArtifact(mirrors, declaredUrl);
 
-		// Steps 5-6: verify the signed checksum, archive, manifest, and
+		// Steps 6-7: verify the signed checksum, archive, manifest, and
 		// expected package identity with the runtime-neutral verifier used
 		// by the release service.
 		const artifactReport = await validateRegistryArtifact(
@@ -976,7 +979,18 @@ export async function handleRegistryInstall(
 				"install",
 			);
 		}
-		const bundle = artifactReport.value;
+		const { bundle, artifactDigest } = artifactReport.value;
+		const recordReport = await verifyAuthoritativePackageRelease(
+			records,
+			artifactDigest,
+			opts?.authoritativeRecords,
+		);
+		if (!recordReport.success) {
+			return registryRecordError(
+				recordReport.code,
+				recordReport.reasons[0]?.message ?? "The release provenance is invalid.",
+			);
+		}
 
 		// Rewrite the manifest's id to the derived opaque pluginId before
 		// it reaches R2 storage or the sandbox loader. The sandbox uses
@@ -995,10 +1009,7 @@ export async function handleRegistryInstall(
 		// is blind to constraint content (host scope), so compare the full
 		// enforced access of record vs bundle here and refuse on any difference.
 		if (
-			!verifiedAccessEqual(
-				records.report.value.declaredAccess,
-				bundle.manifest.declaredAccess ?? {},
-			)
+			!verifiedAccessEqual(recordReport.value.declaredAccess, bundle.manifest.declaredAccess ?? {})
 		) {
 			return {
 				success: false,
@@ -1148,7 +1159,7 @@ export async function handleRegistryInstall(
 				slug,
 				version,
 				capabilities: bundle.manifest.capabilities,
-				verification: recordVerificationSummary(records),
+				verification: recordVerificationSummary(records, recordReport),
 			},
 		};
 	} catch (err) {
@@ -1452,7 +1463,7 @@ export async function handleRegistryUpdate(
 			return registryRecordError(authoritative.error.code, authoritative.error.message);
 		}
 		const records = authoritative.value;
-		const { profile, release } = records.report.value;
+		const { profile, release } = records.inspection.value;
 
 		const releaseYanked = hasCurrentRecordLabel(
 			releaseView.labels ?? [],
@@ -1509,7 +1520,18 @@ export async function handleRegistryUpdate(
 				"update",
 			);
 		}
-		const bundle = artifactReport.value;
+		const { bundle, artifactDigest } = artifactReport.value;
+		const recordReport = await verifyAuthoritativePackageRelease(
+			records,
+			artifactDigest,
+			opts?.authoritativeRecords,
+		);
+		if (!recordReport.success) {
+			return registryRecordError(
+				recordReport.code,
+				recordReport.reasons[0]?.message ?? "The release provenance is invalid.",
+			);
+		}
 
 		// Rewrite manifest.id to the opaque pluginId so the sandbox loader
 		// and R2 layout stay in sync across install and update.
@@ -1521,10 +1543,7 @@ export async function handleRegistryUpdate(
 		// the capability set identical, sails through the escalation diff below,
 		// and installs a bundle enforcing a scope the record never showed.
 		if (
-			!verifiedAccessEqual(
-				records.report.value.declaredAccess,
-				bundle.manifest.declaredAccess ?? {},
-			)
+			!verifiedAccessEqual(recordReport.value.declaredAccess, bundle.manifest.declaredAccess ?? {})
 		) {
 			return {
 				success: false,
@@ -1618,7 +1637,7 @@ export async function handleRegistryUpdate(
 				newVersion,
 				capabilityChanges,
 				routeVisibilityChanges: hasNewPublicRoutes ? routeVisibilityChanges : undefined,
-				verification: recordVerificationSummary(records),
+				verification: recordVerificationSummary(records, recordReport),
 			},
 		};
 	} catch (err) {
