@@ -3,9 +3,9 @@
  *
  * Detail view for a plugin from the experimental decentralized plugin
  * registry. Resolves `(handle, slug)` directly against the configured
- * aggregator; install routes through the EmDash server's
- * `/_emdash/api/admin/plugins/registry/install` endpoint, which
- * re-resolves and re-verifies before writing the install.
+ * aggregator. Consent and installation route through the EmDash server,
+ * which independently verifies publisher records, artifact, manifest, and
+ * provenance before any write.
  *
  * Identified in the URL by a `pluginId` that is `${handle}/${slug}`.
  * The router wraps this component when `manifest.registry` is set on
@@ -43,7 +43,9 @@ import {
 	releasePassesPolicy,
 	resolveRegistryPackage,
 	sbomDownloadHref,
+	verifyRegistryPlugin,
 	type RegistryClientConfig,
+	type RegistryInstallResult,
 	type RegistryReleaseView,
 	type SectionKey,
 } from "../lib/api/registry.js";
@@ -65,6 +67,8 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 	const queryClient = useQueryClient();
 	const [showConsent, setShowConsent] = React.useState(false);
 	const [mcpConsentTools, setMcpConsentTools] = React.useState<PluginMcpConsentTool[]>([]);
+	const [verificationPreview, setVerificationPreview] =
+		React.useState<RegistryInstallResult | null>(null);
 
 	// Plugins list — used to compute whether this package is already
 	// installed. Same query key as elsewhere so the install mutation's
@@ -184,17 +188,10 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 	const isPreRelease = release ? isPreReleaseVersion(release.version) : false;
 
 	// `release.extensions[com.emdashcms.experimental.package.releaseExtension]`
-	// carries the structured `declaredAccess` -- the trust contract. The sandbox
-	// enforces the legacy `capabilities: string[]` shape, so we derive that list
-	// from declaredAccess using the SAME total converter the bundler and runtime
-	// use (`@emdash-cms/plugin-types`). Deriving via the shared converter -- not
-	// a component-local reimplementation -- is what keeps the consent list equal
-	// to what the install handler enforces; an earlier divergent local flattener
-	// dropped hook-registration capabilities and broke every such install.
-	//
-	// `canonicalCapabilitiesForDriftCheck` filters non-strings, dedupes, and
-	// sorts so an aggregator-supplied array with unstable order can't trigger a
-	// spurious server-side drift rejection later.
+	// carries the aggregator's copy of `declaredAccess`. This list is only a
+	// preliminary detail-page preview. The consent dialog uses the server's
+	// direct-PDS verification response and the manifest extracted from the
+	// checksum-verified bundle.
 	//
 	// NSID is exact-matched, not prefix-matched. RFC 0001 fixes the NSID for
 	// this extension; accepting variants like `…releaseExtensionV2` would let a
@@ -337,38 +334,52 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 		);
 	}, [pkg, installedPlugins, slug]);
 	const isInstalled = Boolean(installedEntry);
+	const activeVerification =
+		verificationPreview !== null &&
+		verificationPreview.publisherDid === pkg?.did &&
+		verificationPreview.slug === slug &&
+		verificationPreview.version === release?.version
+			? verificationPreview
+			: null;
+
+	const verificationMutation = useMutation({
+		mutationFn: () => {
+			if (!pkg || !release) throw new Error(t`Select a release before verifying it`);
+			return verifyRegistryPlugin({
+				did: pkg.did,
+				slug,
+				version: release.version,
+			});
+		},
+		onSuccess: (result) => {
+			setVerificationPreview(result);
+			setMcpConsentTools(result.mcpTools);
+			setShowConsent(true);
+		},
+	});
 
 	const installMutation = useMutation({
 		mutationFn: () => {
 			if (!pkg) throw new Error("Package not loaded");
+			if (!activeVerification) throw new Error(t`Verify the plugin before installing it`);
 			return installRegistryPlugin({
 				did: pkg.did,
 				slug,
-				version: release?.version,
-				// Always send the acknowledgement, even when the dialog
-				// showed no permissions. The server compares this list
-				// against the bundle's actual `manifest.capabilities`
-				// after download:
-				//
-				//   - If the bundle has capabilities, the server
-				//     requires us to send a matching list (the consent
-				//     dialog is the only place the admin sees what
-				//     they're agreeing to).
-				//   - If the bundle has no capabilities, no consent is
-				//     required and the server ignores this field.
-				//
-				// Sending the empty list when the release extension was
-				// missing means a publisher who ships a bundle with
-				// permissions but no extension block can't sneak the
-				// permissions past an empty consent dialog -- the
-				// server will refuse with `DECLARED_ACCESS_REQUIRED`.
-				acknowledgedDeclaredAccess: capabilities,
+				version: activeVerification.version,
+				// The server re-fetches the signed records and bundle, then
+				// requires these permissions, tools, and CIDs to match the
+				// evidence shown in the dialog.
+				acknowledgedDeclaredAccess: activeVerification.capabilities,
 				acknowledgedMcpTools: mcpConsentTools,
+				acknowledgedProfileCid: activeVerification.verification.profileCid,
+				acknowledgedReleaseCid: activeVerification.verification.releaseCid,
 			});
 		},
 		onSuccess: () => {
 			setShowConsent(false);
 			setMcpConsentTools([]);
+			setVerificationPreview(null);
+			verificationMutation.reset();
 			void queryClient.invalidateQueries({ queryKey: ["plugins"] });
 			void queryClient.invalidateQueries({ queryKey: ["manifest"] });
 			void queryClient.invalidateQueries({ queryKey: ["registry"] });
@@ -548,14 +559,29 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 					) : (
 						<Button
 							variant="primary"
-							disabled={!release || !policyOk || !envOk || handleResult.status === "invalid"}
-							onClick={() => setShowConsent(true)}
+							disabled={
+								!release ||
+								!policyOk ||
+								!envOk ||
+								handleResult.status === "invalid" ||
+								verificationMutation.isPending
+							}
+							onClick={() => verificationMutation.mutate()}
 						>
-							{t`Install`}
+							{verificationMutation.isPending ? t`Verifying...` : t`Install`}
 						</Button>
 					)}
 				</div>
 			</div>
+
+			{verificationMutation.error ? (
+				<div
+					className="rounded-md border border-kumo-error bg-kumo-error/10 p-4 text-sm text-kumo-error"
+					role="alert"
+				>
+					{getMutationError(verificationMutation.error)}
+				</div>
+			) : null}
 
 			{/* Invalid-handle notice. The publisher's DID document claims a
 			    handle but the handle's domain doesn't point back to this
@@ -781,18 +807,23 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 			) : null}
 
 			{/* Consent dialog */}
-			{showConsent && release ? (
+			{showConsent && release && activeVerification ? (
 				<CapabilityConsentDialog
 					mode="install"
 					pluginName={displayName ?? slug}
-					capabilities={capabilities}
+					capabilities={activeVerification.capabilities}
+					allowedHosts={
+						declaredAccessToCapabilities(activeVerification.declaredAccess).allowedHosts
+					}
 					mcpTools={mcpConsentTools}
+					verification={activeVerification.verification}
 					isPending={installMutation.isPending}
 					error={getMutationError(installMutation.error)}
 					onConfirm={() => installMutation.mutate()}
 					onCancel={() => {
 						setShowConsent(false);
 						setMcpConsentTools([]);
+						setVerificationPreview(null);
 						installMutation.reset();
 					}}
 				/>
