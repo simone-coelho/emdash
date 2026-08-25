@@ -13,6 +13,7 @@ import { ConfigurationError, loadConfiguration, type ConfigurationBindings } fro
 import { ROUTES, type RouteDefinition } from "./routes.js";
 
 export { PublisherDurableObject } from "./publisher-do/publisher-do.js";
+export { ServiceControlDurableObject } from "./control-do/service-control-do.js";
 
 export async function handleRequest(
 	request: Request,
