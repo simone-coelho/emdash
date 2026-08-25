@@ -4,6 +4,7 @@ export default defineConfig({
 	entry: [
 		"src/index.ts",
 		"src/credentials/index.ts",
+		"src/direct-pds/index.ts",
 		"src/discovery/index.ts",
 		"src/env/index.ts",
 		"src/publishing/index.ts",
@@ -21,8 +22,12 @@ export default defineConfig({
 	external: [
 		"@atcute/atproto",
 		"@atcute/client",
+		"@atcute/crypto",
+		"@atcute/identity",
+		"@atcute/identity-resolver",
 		"@atcute/lexicons",
 		"@atcute/lexicons/syntax",
+		"@atcute/repo",
 		"@emdash-cms/registry-lexicons",
 	],
 });

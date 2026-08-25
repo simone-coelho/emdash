@@ -8,38 +8,31 @@
  *      aggregator's `resolvePackage` XRPC.
  *   2. Look up the requested release (or the policy-filtered latest one)
  *      via `getLatestRelease` / `listReleases`.
- *   3. Reject the install if the aggregator surfaces a `security:yanked`
- *      hard-enforcement label or the release is below the configured
- *      minimum release age.
- *   4. Fetch the bundle artifact, walking aggregator mirrors first and
+ *   3. Resolve the publisher DID document, fetch profile and release CARs
+ *      from its PDS, and verify their repository proofs, CIDs, and policy.
+ *   4. Reject the install if the aggregator surfaces an exact-CID
+ *      `security:yanked` label or the release is below the configured age.
+ *   5. Fetch the bundle artifact, walking aggregator mirrors first and
  *      falling back to the publisher-declared URL.
- *   5. Verify the artifact's multibase checksum against the signed
+ *   6. Verify the artifact's multibase checksum against the signed
  *      release record's `artifacts.package.checksum`.
- *   6. Extract `manifest.json` + `backend.js` + optional `admin.js` from
+ *   7. Extract `manifest.json` + `backend.js` + optional `admin.js` from
  *      the gzipped tar bundle.
- *   7. Store the extracted files in site-local R2 under the
+ *   8. Store the extracted files in site-local R2 under the
  *      `registry/<plugin-id>/<version>/` prefix.
- *   8. Write a `plugin_states` row with `source = "registry"` and the
+ *   9. Write a `plugin_states` row with `source = "registry"` and the
  *      `(publisher_did, slug)` pair so updates can be resolved later.
- *   9. Sync the runtime so the plugin becomes active immediately.
+ *  10. Sync the runtime so the plugin becomes active immediately.
  *
- * Known gaps (tracked separately):
- *
- *   - The aggregator-supplied records are not yet cryptographically
- *     verified against the publisher's MST signature. The signed bytes
- *     and CIDs are passed through verbatim per the lexicon, but full
- *     PDS-direct verification with proof traversal is follow-up work.
- *     The artifact checksum is verified end-to-end against the value
- *     in the (aggregator-relayed) release record, which is the actual
- *     trust boundary for the bytes that end up in the sandbox.
- *   - `acceptLabelers` is forwarded as-is to the aggregator; this
- *     handler does not independently re-fetch and verify labels from
- *     each labeller's DID. Aggregator label envelope tampering is
- *     mitigated by the artifact checksum but not detected.
+ * `acceptLabelers` is forwarded to the aggregator. Label envelopes are
+ * moderation metadata: exact-CID labels can block installation but cannot
+ * supply records, checksums, permissions, or executable bytes.
  */
 
 import { ClientResponseError, ClientValidationError } from "@atcute/client";
 import type { Did } from "@atcute/lexicons";
+import { canonicalizeDeclaredAccess } from "@emdash-cms/plugin-types";
+import type { CanonicalDeclaredAccess } from "@emdash-cms/plugin-types";
 import { checkEnvCompatibility, findSkippedEnvConstraints } from "@emdash-cms/registry-client/env";
 import type { HostEnv } from "@emdash-cms/registry-client/env";
 import type { Kysely } from "kysely";
@@ -58,6 +51,13 @@ import {
 	type RegistryArtifactVerificationCode,
 } from "../../registry/artifact-verification.js";
 import {
+	readAuthoritativePackageRelease,
+	type AuthoritativeRecordErrorCode,
+	type AuthoritativeRecordReader,
+	type AuthoritativeRecordReadOptions,
+	type VerifiedAuthoritativeRecords,
+} from "../../registry/authoritative-records.js";
+import {
 	canonicalCapabilitiesForDriftCheck,
 	coerceRegistryConfig,
 	parseDurationSeconds,
@@ -65,6 +65,7 @@ import {
 	validateAggregatorUrl,
 } from "../../registry/config.js";
 import { makeRegistryPluginId } from "../../registry/plugin-id.js";
+import { hasCurrentRecordLabel } from "../../registry/record-labels.js";
 import type { RegistryConfigInput } from "../../registry/types.js";
 import { resolveAndValidateExternalUrl, SsrfError } from "../../security/ssrf.js";
 import { EmDashStorageError } from "../../storage/types.js";
@@ -77,8 +78,6 @@ import {
 	loadBundleFromR2,
 	storeBundleInR2,
 } from "./marketplace.js";
-
-const RELEASE_EXTENSION_NSID = "com.emdashcms.experimental.package.releaseExtension";
 
 /**
  * Whether two `declaredAccess` blocks grant exactly the same enforced access --
@@ -96,6 +95,10 @@ export function enforcedAccessEqual(a: DeclaredAccess, b: DeclaredAccess): boole
 		JSON.stringify(aa.capabilities.toSorted()) === JSON.stringify(bb.capabilities.toSorted()) &&
 		JSON.stringify(aa.allowedHosts.toSorted()) === JSON.stringify(bb.allowedHosts.toSorted())
 	);
+}
+
+function verifiedAccessEqual(a: CanonicalDeclaredAccess, b: DeclaredAccess): boolean {
+	return JSON.stringify(a) === JSON.stringify(canonicalizeDeclaredAccess(b));
 }
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -141,6 +144,18 @@ export interface RegistryInstallResult {
 	version: string;
 	/** Capabilities surfaced from the bundle's manifest. */
 	capabilities: string[];
+	verification: RegistryRecordVerificationSummary;
+}
+
+export interface RegistryRecordVerificationSummary {
+	profileCid: string;
+	releaseCid: string;
+	provenance: "verified" | "absent-optional";
+	policy: {
+		requireProvenance: boolean;
+		confirmation: "escalation-only" | "always";
+		approvers: string[];
+	};
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -173,6 +188,31 @@ function registryArtifactError(
 			message,
 			details: { verificationCode: code },
 		},
+	};
+}
+
+function registryRecordError(
+	code: AuthoritativeRecordErrorCode,
+	message: string,
+): ApiResult<never> {
+	return {
+		success: false,
+		error: {
+			code: "RECORD_VERIFICATION_FAILED",
+			message,
+			details: { verificationCode: code },
+		},
+	};
+}
+
+function recordVerificationSummary(
+	records: VerifiedAuthoritativeRecords,
+): RegistryRecordVerificationSummary {
+	return {
+		profileCid: records.profile.cid,
+		releaseCid: records.release.cid,
+		provenance: records.report.provenance.status,
+		policy: records.report.value.policy,
 	};
 }
 
@@ -560,7 +600,12 @@ export async function handleRegistryInstall(
 	sandboxRunner: SandboxRunner | null,
 	registryConfigInput: RegistryConfigInput | undefined,
 	input: RegistryInstallInput,
-	opts?: { configuredPluginIds?: Set<string>; hostEnv?: HostEnv },
+	opts?: {
+		configuredPluginIds?: Set<string>;
+		hostEnv?: HostEnv;
+		authoritativeRecords?: AuthoritativeRecordReadOptions;
+		readAuthoritativeRecords?: AuthoritativeRecordReader;
+	},
 ): Promise<ApiResult<RegistryInstallResult>> {
 	// Accept either the bare-string shorthand or the full
 	// `RegistryConfig` object (see `RegistryConfigInput`).
@@ -709,19 +754,9 @@ export async function handleRegistryInstall(
 			};
 		}
 
-		// Identity cross-check on every field the aggregator denormalises
-		// onto the package and release views. A buggy or compromised
-		// aggregator could otherwise return a release view for a
-		// different `(did, slug, version)` than we asked for; the
-		// handler would then fetch + checksum-verify + install bytes
-		// under the requested package's pluginId but for a different
-		// publisher's record. Checksum verification only proves the bytes
-		// match the *returned* record, not that the record belongs to
-		// the package we requested.
-		// `releaseView.release` is validated against the release lexicon by
-		// DiscoveryClient (or `null` if it didn't conform). A `null` here makes
-		// the identity checks below fail closed, which is the desired outcome.
-		const signedRelease = releaseView.release;
+		// The aggregator selects the package/version and supplies mirrors and
+		// moderation metadata. Its copies of the signed records are not
+		// verification inputs.
 		if (packageView.did !== publisherDid || packageView.slug !== slug) {
 			return {
 				success: false,
@@ -734,9 +769,7 @@ export async function handleRegistryInstall(
 		if (
 			releaseView.did !== publisherDid ||
 			releaseView.package !== slug ||
-			signedRelease?.package !== slug ||
-			(requestedVersion !== undefined && releaseView.version !== requestedVersion) ||
-			signedRelease?.version !== releaseView.version
+			(requestedVersion !== undefined && releaseView.version !== requestedVersion)
 		) {
 			return {
 				success: false,
@@ -749,15 +782,29 @@ export async function handleRegistryInstall(
 		}
 
 		const version = releaseView.version;
-
-		// Step 3: takedown label check (hard-enforced via aggregator's
-		// `atproto-accept-labelers` filtering, but we belt-and-suspenders
-		// the package-level labels too).
-		const yanked = (packageView.labels ?? []).some(
-			(l: { val?: string }) => l.val === "security:yanked",
+		const authoritative = await (opts?.readAuthoritativeRecords ?? readAuthoritativePackageRelease)(
+			publisherDid,
+			slug,
+			version,
+			opts?.authoritativeRecords,
 		);
-		const releaseYanked = (releaseView.labels ?? []).some(
-			(l: { val?: string }) => l.val === "security:yanked",
+		if (!authoritative.success) {
+			return registryRecordError(authoritative.error.code, authoritative.error.message);
+		}
+		const records = authoritative.value;
+		const { profile, release } = records.report.value;
+
+		// Moderation applies to the exact signed metadata CIDs. A stale,
+		// unversioned, negated, or expired label cannot affect this release.
+		const yanked = hasCurrentRecordLabel(
+			packageView.labels ?? [],
+			"security:yanked",
+			records.profile,
+		);
+		const releaseYanked = hasCurrentRecordLabel(
+			releaseView.labels ?? [],
+			"security:yanked",
+			records.release,
 		);
 		if (yanked || releaseYanked) {
 			return {
@@ -776,7 +823,7 @@ export async function handleRegistryInstall(
 		// disabled Install button. `requires` is lexicon-`unknown`; the
 		// helper guards its shape.
 		if (opts?.hostEnv) {
-			const envError = assertEnvCompatible(releaseView.release?.requires, opts.hostEnv);
+			const envError = assertEnvCompatible(release.requires, opts.hostEnv);
 			if (envError) return { success: false, error: envError };
 		}
 
@@ -786,13 +833,11 @@ export async function handleRegistryInstall(
 		// must still hit the holdback. The `minimumReleaseAgeExclude`
 		// allowlist short-circuits the check for trusted publisher DIDs.
 		//
-		// Caveat: `releaseView.indexedAt` is aggregator-supplied envelope
-		// data, not a signed timestamp. A compromised aggregator can
-		// claim an arbitrary indexed-at date and bypass the holdback;
-		// closing this gap requires fetching the release record's
-		// signed createdAt from the publisher's PDS (deferred to the
-		// follow-up that adds full MST verification). If the timestamp
-		// is missing or malformed, we fail closed and reject the install.
+		// `releaseView.indexedAt` is aggregator operational data, not part
+		// of the signed release. The release schema has no publication
+		// timestamp, so minimum age remains a local discovery holdback
+		// rather than a cryptographic property. A missing or malformed
+		// timestamp fails closed.
 		// `registryConfig` is the user-supplied integration option, not
 		// the normalized manifest shape, so the duration parse runs once
 		// per install. Catch a malformed value here -- normally caught at
@@ -897,14 +942,10 @@ export async function handleRegistryInstall(
 			};
 		}
 
-		// Step 4: fetch the artifact bytes.
-		// `releaseView.release` is lexicon-validated by DiscoveryClient (or
-		// `null`); a missing url/checksum (incl. the `null` case) fails closed
-		// below. Mirrors come from the envelope (aggregator operational data,
-		// not part of the signed record).
-		const release = releaseView.release;
-		const declaredUrl = release?.artifacts?.package?.url;
-		const declaredChecksum = release?.artifacts?.package?.checksum;
+		// Step 4: fetch bytes from an aggregator mirror or the URL in the
+		// authoritative signed release. Mirror bytes remain untrusted.
+		const declaredUrl = release.artifacts.package.url;
+		const declaredChecksum = release.artifacts.package.checksum;
 
 		if (!declaredUrl || !declaredChecksum) {
 			return {
@@ -953,13 +994,11 @@ export async function handleRegistryInstall(
 		// outside what the user reviewed. The capability-set consent gate below
 		// is blind to constraint content (host scope), so compare the full
 		// enforced access of record vs bundle here and refuse on any difference.
-		const recordExt =
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- extensions is the lexicon's open `unknown` map; narrow to read our own extension
-			(release?.extensions as Record<string, { declaredAccess?: DeclaredAccess }> | undefined)?.[
-				RELEASE_EXTENSION_NSID
-			];
 		if (
-			!enforcedAccessEqual(recordExt?.declaredAccess ?? {}, bundle.manifest.declaredAccess ?? {})
+			!verifiedAccessEqual(
+				records.report.value.declaredAccess,
+				bundle.manifest.declaredAccess ?? {},
+			)
 		) {
 			return {
 				success: false,
@@ -973,13 +1012,9 @@ export async function handleRegistryInstall(
 
 		// Capability consent gate: the admin MUST acknowledge the
 		// capabilities the bundle's manifest actually declares before we
-		// install it. The bundle manifest is the only source of truth
-		// the runtime sandbox enforces -- the release record's
-		// `declaredAccess` extension is an aggregator-supplied
-		// assertion that the publisher may or may not have included,
-		// and trusting it would let a malicious publisher (or a
-		// compromised aggregator) ship a bundle whose manifest
-		// requests `content:*` etc. behind an empty consent dialog.
+		// install it. The bundle manifest is the runtime enforcement
+		// currency; the exact-equality check above binds it to the
+		// independently verified signed release.
 		//
 		// Two outcomes after normalization (filter to strings, dedupe,
 		// sort):
@@ -1071,13 +1106,11 @@ export async function handleRegistryInstall(
 		// Cleanup is best-effort; if it also fails, the row failure
 		// still surfaces to the caller and the orphan R2 bundle costs
 		// only the storage of a single checksum-verified zip.
-		// `packageView.profile` is lexicon-validated by DiscoveryClient (or null).
-		const profile = packageView.profile;
 		try {
 			await stateRepo.upsert(pluginId, version, "active", {
 				source: "registry",
-				displayName: profile?.name ?? slug,
-				description: profile?.description ?? undefined,
+				displayName: profile.name ?? slug,
+				description: profile.description ?? undefined,
 				registryPublisherDid: publisherDid,
 				registrySlug: slug,
 			});
@@ -1115,6 +1148,7 @@ export async function handleRegistryInstall(
 				slug,
 				version,
 				capabilities: bundle.manifest.capabilities,
+				verification: recordVerificationSummary(records),
 			},
 		};
 	} catch (err) {
@@ -1244,6 +1278,7 @@ export interface RegistryUpdateResult {
 	capabilityChanges: { added: string[]; removed: string[] };
 	/** Set only when `newlyPublic` is non-empty, mirroring marketplace. */
 	routeVisibilityChanges?: { newlyPublic: string[] };
+	verification: RegistryRecordVerificationSummary;
 }
 
 /**
@@ -1269,6 +1304,8 @@ export async function handleRegistryUpdate(
 		confirmRouteVisibilityChanges?: boolean;
 		confirmMcpTools?: boolean;
 		hostEnv?: HostEnv;
+		authoritativeRecords?: AuthoritativeRecordReadOptions;
+		readAuthoritativeRecords?: AuthoritativeRecordReader;
 	},
 ): Promise<ApiResult<RegistryUpdateResult>> {
 	const registryConfig = coerceRegistryConfig(registryConfigInput);
@@ -1377,16 +1414,12 @@ export async function handleRegistryUpdate(
 			};
 		}
 
-		// Identity cross-check. A buggy/compromised aggregator must not
-		// trick us into installing a record signed for a different
-		// (did, slug, version) under this plugin's pluginId.
-		const signedRelease = releaseView.release;
+		// The aggregator selects the target version and supplies mirrors and
+		// moderation metadata. Its release-record copy is not trusted.
 		if (
 			releaseView.did !== publisherDid ||
 			releaseView.package !== slug ||
-			signedRelease?.package !== slug ||
-			(opts?.version !== undefined && releaseView.version !== opts.version) ||
-			signedRelease?.version !== releaseView.version
+			(opts?.version !== undefined && releaseView.version !== opts.version)
 		) {
 			return {
 				success: false,
@@ -1409,9 +1442,22 @@ export async function handleRegistryUpdate(
 			};
 		}
 
-		// Yanked label check (mirrors install).
-		const releaseYanked = (releaseView.labels ?? []).some(
-			(l: { val?: string }) => l.val === "security:yanked",
+		const authoritative = await (opts?.readAuthoritativeRecords ?? readAuthoritativePackageRelease)(
+			publisherDid,
+			slug,
+			newVersion,
+			opts?.authoritativeRecords,
+		);
+		if (!authoritative.success) {
+			return registryRecordError(authoritative.error.code, authoritative.error.message);
+		}
+		const records = authoritative.value;
+		const { profile, release } = records.report.value;
+
+		const releaseYanked = hasCurrentRecordLabel(
+			releaseView.labels ?? [],
+			"security:yanked",
+			records.release,
 		);
 		if (releaseYanked) {
 			return {
@@ -1424,12 +1470,12 @@ export async function handleRegistryUpdate(
 		// land a version whose `requires` the host doesn't satisfy. Same
 		// guard as install; `requires` is lexicon-`unknown`.
 		if (opts?.hostEnv) {
-			const envError = assertEnvCompatible(signedRelease.requires, opts.hostEnv);
+			const envError = assertEnvCompatible(release.requires, opts.hostEnv);
 			if (envError) return { success: false, error: envError };
 		}
 
-		const declaredUrl = signedRelease.artifacts?.package?.url;
-		const declaredChecksum = signedRelease.artifacts?.package?.checksum;
+		const declaredUrl = release.artifacts.package.url;
+		const declaredChecksum = release.artifacts.package.checksum;
 		if (!declaredUrl || !declaredChecksum) {
 			return {
 				success: false,
@@ -1474,13 +1520,11 @@ export async function handleRegistryUpdate(
 		// that changes only the host scope (e.g. api.good.com -> evil.com) keeps
 		// the capability set identical, sails through the escalation diff below,
 		// and installs a bundle enforcing a scope the record never showed.
-		// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- extensions is the lexicon's open `unknown` map; narrow to read our own extension
-		const updateRecordExtensions = signedRelease?.extensions as
-			| Record<string, { declaredAccess?: DeclaredAccess }>
-			| undefined;
-		const recordExt = updateRecordExtensions?.[RELEASE_EXTENSION_NSID];
 		if (
-			!enforcedAccessEqual(recordExt?.declaredAccess ?? {}, bundle.manifest.declaredAccess ?? {})
+			!verifiedAccessEqual(
+				records.report.value.declaredAccess,
+				bundle.manifest.declaredAccess ?? {},
+			)
 		) {
 			return {
 				success: false,
@@ -1547,17 +1591,14 @@ export async function handleRegistryUpdate(
 		// so a retry of the same update is idempotent.
 		await storeBundleInR2(storage, pluginId, newVersion, bundle, "registry");
 
-		// Update state. Preserve publisher/slug; refresh displayName /
-		// description from the install handler's seeded values (we don't
-		// re-fetch the profile here — that's a separate `getPackage` round
-		// trip and the install-time values are still authoritative for
-		// the same package identity).
+		// Refresh display metadata from the same signed profile used for
+		// release-policy verification.
 		await stateRepo.upsert(pluginId, newVersion, "active", {
 			source: "registry",
 			registryPublisherDid: publisherDid,
 			registrySlug: slug,
-			displayName: existing.displayName ?? slug,
-			description: existing.description ?? undefined,
+			displayName: profile.name ?? slug,
+			description: profile.description ?? undefined,
 			mcpToolsEnabled: false,
 			mcpToolsConsent: null,
 		});
@@ -1577,6 +1618,7 @@ export async function handleRegistryUpdate(
 				newVersion,
 				capabilityChanges,
 				routeVisibilityChanges: hasNewPublicRoutes ? routeVisibilityChanges : undefined,
+				verification: recordVerificationSummary(records),
 			},
 		};
 	} catch (err) {
